@@ -1,16 +1,86 @@
-# React + Vite
+# PRESENZA
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+### Smart Attendance Management System
 
-Currently, two official plugins are available:
+Presenza is a web-based attendance management system designed to make student management, attendance tracking, and attendance reporting simpler and more organized.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## ✨ Features
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 👥 Student Management
+- Add new students
+- Edit student information
+- Delete students
+- Search students
+- View student records
 
-## Expanding the ESLint configuration
+### 📊 Student Overview
+- Total number of students
+- Class and section information
+- Attendance overview
+- Overall attendance statistics
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### ✅ Attendance Management
+- Select subject and date
+- Mark students as Present or Absent
+- Mark the entire class Present or Absent
+- Save attendance records
+- Prevent duplicate attendance records
+
+### 📈 Reports & Analytics
+- Individual student attendance reports
+- Subject-wise attendance reports
+- Attendance percentages
+- Download attendance reports as CSV
+
+---
+
+## 🛠️ Tech Stack
+
+### Frontend
+- React
+- Vite
+- Axios
+- Lucide React
+
+### Backend
+- Python
+- Flask
+- Flask-SQLAlchemy
+
+### Database
+- MySQL
+
+---
+
+## 📁 Project Structure
+
+```text
+attendance-system/
+│
+├── backend/
+│   ├── app.py
+│   ├── config.py
+│   ├── database.py
+│   ├── models.py
+│   ├── google_sheet.py
+│   ├── requirements.txt
+│   └── .env
+│
+├── frontend/
+│   ├── public/
+│   │   ├── presencia-logo.png
+│   │   ├── soa-logo.webp
+│   │   └── campus-banner.jpg
+│   │
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── App.css
+│   │   ├── index.css
+│   │   └── main.jsx
+│   │
+│   ├── package.json
+│   └── vite.config.js
+│
+└── README.md
