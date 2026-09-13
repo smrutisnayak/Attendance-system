@@ -1,9 +1,11 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, session
 from flask_cors import CORS
-import os
-import requests
 
 from config import Config
+import os
+import smtplib
+from email.message import EmailMessage
+from werkzeug.security import generate_password_hash, check_password_hash
 from database import db
 from models import Class, Student, Teacher, Subject, Attendance, Comment
 from google_sheet import get_students_from_sheet
@@ -12,21 +14,62 @@ from google_sheet import get_students_from_sheet
 app = Flask(__name__)
 app.config.from_object(Config)
 
-CORS(app)
+# Allow the React frontend to use Flask session cookies.
+CORS(
+    app,
+    supports_credentials=True,
+    origins=[
+        "http://localhost:5174",
+        "http://127.0.0.1:5174"
+    ]
+)
+
+# Used to securely sign the login session cookie.
+app.secret_key = os.getenv(
+    "SECRET_KEY",
+    "presenza-development-secret"
+)
 
 db.init_app(app)
 
 
 # --------------------------------------------------
-# SEND ATTENDANCE EMAIL THROUGH GOOGLE APPS SCRIPT
+# USER AUTHENTICATION
+# --------------------------------------------------
+
+class User(db.Model):
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(50), nullable=False, default="teacher")
+
+
+# --------------------------------------------------
+# EMAIL NOTIFICATION
 # --------------------------------------------------
 
 def send_attendance_email(student, subject, date, status):
-    script_url = os.getenv("GOOGLE_APPS_SCRIPT_URL", "").strip()
+    """
+    Send an attendance update email to one student.
 
-    if not script_url:
-        return False, "Google Apps Script URL is not configured"
+    SMTP settings are read from .env:
+    EMAIL_ADDRESS
+    EMAIL_APP_PASSWORD
+    SMTP_SERVER
+    SMTP_PORT
+    """
 
+    sender = os.getenv("EMAIL_ADDRESS", "").strip()
+    app_password = os.getenv("EMAIL_APP_PASSWORD", "").strip()
+    smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+
+    if not sender or not app_password:
+        return False, "Email settings are not configured"
+
+    # Calculate the student's updated attendance for this subject.
     records = Attendance.query.filter_by(
         student_id=student.id,
         subject_id=subject.id
@@ -35,12 +78,14 @@ def send_attendance_email(student, subject, date, status):
     total_classes = len(records)
 
     attended = sum(
-        1 for record in records
+        1
+        for record in records
         if record.status == "PRESENT"
     )
 
     absent = sum(
-        1 for record in records
+        1
+        for record in records
         if record.status == "ABSENT"
     )
 
@@ -52,40 +97,62 @@ def send_attendance_email(student, subject, date, status):
 
     percentage = round(percentage, 2)
 
-    data = {
-        "email": student.email,
-        "student_name": student.name,
-        "subject": subject.subject_name,
-        "date": date,
-        "status": status,
-        "total_classes": total_classes,
-        "attended": attended,
-        "absent": absent,
-        "percentage": percentage
-    }
+    if percentage >= 90:
+        comment = "Excellent attendance"
+    elif percentage >= 75:
+        comment = "Good attendance"
+    elif percentage >= 65:
+        comment = "Warning: attendance is below 75%"
+    else:
+        comment = "Critical: attendance is very low"
+
+    if status == "PRESENT":
+        status_text = "PRESENT"
+    else:
+        status_text = "ABSENT"
+
+    message = EmailMessage()
+
+    message["Subject"] = (
+        f"Attendance Update - {subject.subject_name}"
+    )
+    message["From"] = sender
+    message["To"] = student.email
+
+    message.set_content(
+        f"""Hello {student.name},
+
+Your attendance has been updated.
+
+Subject: {subject.subject_name}
+Date: {date}
+Status: {status_text}
+
+Your current attendance:
+Total Classes: {total_classes}
+Attended: {attended}
+Absent: {absent}
+Attendance Percentage: {percentage}%
+
+Comment: {comment}
+
+Regards,
+Attendance Management System
+CSE • E1G2
+"""
+    )
 
     try:
-        response = requests.post(
-            script_url,
-            json=data,
-            timeout=30
-        )
+        with smtplib.SMTP(smtp_server, smtp_port, timeout=20) as server:
+            server.starttls()
+            server.login(sender, app_password)
+            server.send_message(message)
 
-        response.raise_for_status()
-        result = response.json()
-
-        if result.get("success"):
-            return True, "Email sent successfully"
-
-        return False, result.get(
-            "message",
-            "Email could not be sent"
-        )
+        return True, "Email sent successfully"
 
     except Exception as e:
         print(f"EMAIL ERROR for {student.email}: {e}")
         return False, str(e)
-
 
 
 # --------------------------------------------------
@@ -95,6 +162,96 @@ def send_attendance_email(student, subject, date, status):
 @app.route("/")
 def home():
     return "Attendance Management System API is running!"
+
+
+# --------------------------------------------------
+# LOGIN
+# --------------------------------------------------
+
+@app.route("/api/auth/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True)
+
+    if not data:
+        return jsonify({
+            "error": "No data provided"
+        }), 400
+
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", ""))
+
+    if not email or not password:
+        return jsonify({
+            "error": "Email and password are required"
+        }), 400
+
+    user = User.query.filter_by(email=email).first()
+
+    if not user or not check_password_hash(
+        user.password_hash,
+        password
+    ):
+        return jsonify({
+            "error": "Invalid email or password"
+        }), 401
+
+    session.clear()
+    session["user_id"] = user.id
+    session["user_email"] = user.email
+    session["user_role"] = user.role
+
+    return jsonify({
+        "message": "Login successful",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "role": user.role
+        }
+    }), 200
+
+
+# --------------------------------------------------
+# CURRENT LOGGED-IN USER
+# --------------------------------------------------
+
+@app.route("/api/auth/me", methods=["GET"])
+def current_user():
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return jsonify({
+            "authenticated": False
+        }), 401
+
+    user = db.session.get(User, user_id)
+
+    if not user:
+        session.clear()
+        return jsonify({
+            "authenticated": False
+        }), 401
+
+    return jsonify({
+        "authenticated": True,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "role": user.role
+        }
+    }), 200
+
+
+# --------------------------------------------------
+# LOGOUT
+# --------------------------------------------------
+
+@app.route("/api/auth/logout", methods=["POST"])
+def logout():
+    session.clear()
+
+    return jsonify({
+        "message": "Logged out successfully"
+    }), 200
 
 
 # --------------------------------------------------
@@ -805,7 +962,7 @@ def mark_attendance():
 
         db.session.commit()
 
-        email_sent, email_message = send_attendance_email(
+        email_sent, email_error = send_attendance_email(
             student,
             subject,
             date,
@@ -821,7 +978,7 @@ def mark_attendance():
                 email_sent,
 
             "email_message":
-                email_message,
+                email_error,
 
             "attendance": {
 
@@ -866,12 +1023,13 @@ def mark_attendance():
 
     db.session.commit()
 
-    email_sent, email_message = send_attendance_email(
+    email_sent, email_error = send_attendance_email(
         student,
         subject,
         date,
         status
     )
+
 
     return jsonify({
 
@@ -882,7 +1040,7 @@ def mark_attendance():
             email_sent,
 
         "email_message":
-            email_message,
+            email_error,
 
         "attendance": {
 
@@ -1109,8 +1267,27 @@ def add_subject():
 # --------------------------------------------------
 
 with app.app_context():
-
     db.create_all()
+
+    # Development account for testing login.
+    # Registration can replace this later.
+    demo_email = "admin@presenza.com"
+    demo_password = "admin123"
+
+    demo_user = User.query.filter_by(
+        email=demo_email
+    ).first()
+
+    if not demo_user:
+        demo_user = User(
+            email=demo_email,
+            password_hash=generate_password_hash(demo_password, method="pbkdf2:sha256"),
+            role="teacher"
+        )
+
+        db.session.add(demo_user)
+        db.session.commit()
+
 
 
 # --------------------------------------------------
